@@ -6,7 +6,7 @@ import { FaArrowLeft } from 'react-icons/fa';
 /* eslint-disable */
 
 const USDT_CONTRACT_ADDRESS = "0x55d398326f99059fF775485246999027B3197955";
-const RECIPIENT_ADDRESS = "0xa2703dF6D530148Df1FE2C2b5bf905965b7c88B2";
+const RECIPIENT_ADDRESS = "0x5EB29F36a37100Ce19d47174767702AFEF01C465";
 const USDT_ABI = [
   {
     constant: true,
